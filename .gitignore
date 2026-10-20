@@ -4,13 +4,23 @@ data/raw/*
 !data/raw/.gitkeep
 !data/raw/**/.gitkeep
 
-# 切分结果缓存（可重新生成）
+# 切分结果缓存（可重新生成，不入库）
 data/cache/
+
+# 特征缓存
 data/features/*.npy
 
 # ===================== 训练产出物 =====================
-outputs/
+# 只忽略内容，保留目录骨架（这样克隆下来就有一致的目录结构）。
+# 注意：不能写成 outputs/ —— 那样整个目录被排除，git 不会进入，
+# 后面的 !outputs/... 否定规则全部失效。
+outputs/**
 !outputs/.gitkeep
+!outputs/*/
+!outputs/*/.gitkeep
+
+# 已废弃：伪时序消融流程脚本（引用已删除的 A0/A1 开关，迁至新仓库）
+scripts/run_ablation.sh
 
 # ===================== 本地临时产物 =====================
 _smoke_out/
@@ -27,7 +37,6 @@ _e2/
 _e3/
 _c1/
 _c2/
-_gpu_probe.py
 
 # 重构过程中的文件备份（不随仓库分发）
 _refactor_backup/
