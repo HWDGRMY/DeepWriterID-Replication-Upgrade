@@ -1,7 +1,17 @@
 """
-DeepWriterID v2.0 安装配置。
+DeepWriterID Replication & Upgrade —— 安装配置。
 
-基于 ConvNeXt V2 的笔迹识别系统，包含数据解析、特征提取、模型训练与评估。
+论文《DeepWriterID》的对齐复刻，并在 CASIA-OLHWDB 2.0–2.2（1019 位书写者）上
+提供 DCNN 与 ConvNeXt V2-Femto 双骨干的配对对照实验。
+
+包含数据解析、伪字符切分、路径签名特征提取、DropSegment 增强、模型训练与
+页面级评估的完整实现。
+
+安装（开发模式）：
+    pip install -e .
+
+注意：本项目内部一律以 `from src.xxx import ...` 引用模块，因此 `src` 本身
+即为包名；dist 名称（deepwriterid）仅用于 pip 元数据，不影响导入路径。
 """
 
 from setuptools import setup, find_packages
@@ -10,14 +20,17 @@ with open("README.md", "r", encoding="utf-8") as f:
     long_description = f.read()
 
 setup(
-    name="deepwriterid-v2",
-    version="2.0.0",
+    name="deepwriterid",
+    version="2.2.1",
     author="HWDGRMY",
     author_email="zhouhao_oss@163.com",
-    description="ConvNeXt V2-based online text-independent writer identification on CASIA-OLHWDB",
+    description=(
+        "论文对齐的 DeepWriterID 复刻：CASIA-OLHWDB 上的双骨干"
+        "（DCNN / ConvNeXt V2-Femto）在线文本无关书写者识别"
+    ),
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/HWDGRMY/DeepWriterID-v2",
+    url="https://github.com/HWDGRMY/DeepWriterID-Replication-Upgrade",
     license="MIT",
 
     packages=find_packages(include=["src", "src.*"]),
@@ -29,7 +42,9 @@ setup(
         "torchvision>=0.15.0",
         # 现代化骨干网络
         "timm>=0.9.0",
-        # 路径签名特征提取
+        # 本地加载 timm 预训练权重（src/models/backbone.py 用 safetensors.torch.load_file）
+        "safetensors>=0.4.0",
+        # 路径签名特征提取（建议配合 --no-build-isolation 安装，见 README §13.1）
         "signatory",
         # 数据处理
         "numpy>=1.24",
@@ -40,8 +55,10 @@ setup(
         "tqdm>=4.65",
         # 可视化
         "matplotlib>=3.7",
-        # 评估指标
+        # 评估指标（scikit-learn 用于 t-SNE 与混淆矩阵）
         "scikit-learn>=1.3",
+        # 互补性分析的配对 t 检验（scripts/analyze_complementarity.py 用 scipy.stats）
+        "scipy>=1.10",
     ],
 
     extras_require={
@@ -69,9 +86,13 @@ setup(
         "writer-identification",
         "handwriting-recognition",
         "online-handwriting",
+        "path-signature",
+        "drop-segment",
         "deep-learning",
         "convnext",
+        "dcnn",
         "casia-olhwdb",
+        "deepwriterid",
     ],
 
     include_package_data=True,

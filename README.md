@@ -493,8 +493,10 @@ epochs: 60        # 约 19.5 小时（batch 100 下约 19.5 分钟/轮）
 | 内存 | **48 GB 即可运行**（batch 100）；batch 192 需 60 GB |
 | 操作系统 | Ubuntu 22.04 LTS |
 | Python | 3.12 |
-| PyTorch | 2.5.1 |
-| 关键依赖 | `timm`、`signatory`、`opencv-python` |
+| PyTorch / CUDA | 2.8.0 / cu128（见 `environment.yml`） |
+| 关键依赖 | `timm`、`safetensors`、`signatory`、`opencv-python`、`scipy` |
+
+> 完整的依赖清单与版本约束见 `environment.yml`；本次运行的解析后配置与运行环境记录在训练产出的 `multi_arch_config.json` 中。
 
 ---
 
@@ -827,14 +829,18 @@ DeepWriterID-Replication-Upgrade/
 ### 13.1 环境
 
 ```bash
+# 方式一：conda 环境（推荐，版本已对齐）
 conda env create -f environment.yml
 conda activate deepwriterid
 
-# 或手动安装
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
-pip install timm pyyaml tqdm pandas opencv-python matplotlib numpy scikit-learn
+# 方式二：手动 pip 安装
+pip install torch==2.8.0 torchvision==0.23.0 --index-url https://download.pytorch.org/whl/cu128
+pip install timm safetensors pyyaml tqdm pandas opencv-python matplotlib numpy scikit-learn scipy
 pip install signatory --no-build-isolation
 ```
+
+> `signatory` 必须加 `--no-build-isolation`，否则它会在隔离环境里重新解析 torch 依赖并导致 CPU 版被装上。
+> 也可以用 `pip install -e .` 一次性装齐 `setup.py` 中声明的全部依赖。
 
 ### 13.2 数据
 
