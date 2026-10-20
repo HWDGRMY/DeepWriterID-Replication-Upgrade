@@ -1,0 +1,139 @@
+# ============================================================================
+# 伪时序双路融合 —— 主配置
+#
+# 三种消融模式共用本文件，通过命令行 --mode 切换：
+#   --mode static   → 实验 A：纯静态基线（数值等价于原 ConvNeXtBackbone）
+#   --mode dynamic  → 实验 B：纯动态分支
+#   --mode dual     → 实验 C：双路融合
+#
+# 命令行示例：
+#   python scripts/train_dual.py --mode dual    --config configs/dual_stream.yaml
+#   python scripts/train_dual.py --mode static  --config configs/dual_stream.yaml
+#   python scripts/train_dual.py --mode dynamic --config configs/dual_stream.yaml
+# ============================================================================
+
+mode: "dual"
+
+model:
+  name: "convnextv2_femto"
+  feature_dim: 512
+  in_chans: 64
+  pretrained: false
+  # timm 的 ConvNeXt V2-Femto 骨干网预训练权重（本地文件，避免云端访问 HuggingFace）
+  pretrained_path: "pretrained/convnextv2_femto.safetensors"
+
+  # ---- 静态分支正则 ----
+  drop_path: 0.1
+  dropout_head: 0.3
+  dropout_classifier: 0.4
+
+  # ---- 动态分支 ----
+  dynamic_dim: 256
+  seq_len: 200
+  dynamic_in_dim: 2
+  d_model: 64
+  nhead: 4
+  num_layers: 4
+  dim_feedforward: 256
+  dynamic_dropout: 0.1
+  pooling: "attention"          # attention | mean | max
+  pos_encoding: "sinusoidal"    # sinusoidal | learnable | none
+
+  # ---- 融合层 ----
+  fusion_hidden: 512
+  fusion_dropout: 0.3
+  freeze_static: true
+
+  # ==========================================================================
+  # 【关键】静态分支热启动：从已经收敛到 96.17% 的纯静态基线继续训练。
+  # 留空则静态分支随机初始化，双路融合几乎不可能超过基线。
+  # 云端请把该文件一起上传，或改成本机绝对路径。
+  # ==========================================================================
+  static_init_path: "outputs/checkpoints/convnext_best_9617.pth"
+
+data:
+  batch_size: 192
+  num_workers: 16
+  seq_len: 200
+  dynamic_speed_clip: 10.0      # 归一化伪速度截断上限，None 表示不截断
+
+  # ==========================================================================
+  # 静态特征：只有一种实现，没有开关
+  #
+  # 按原文：1 张位图 + 63 张逐点前缀签名图（63 = Σ_{i=0..5} 2^i，含 k=0 项）。
+  #
+  # 早期这里有两个开关（separator_aware / fix_signature_layout）用来切回 v2.0
+  # 的缺陷行为（A0），已整个删除。A0 的四个缺陷与量化证据见
+  # configs/multi_arch.yaml 的注释，以及 python scripts/diagnose_static_features.py。
+  # ==========================================================================
+
+training:
+  weight_decay: 0.05
+  warmup_epochs: 1
+  eval_frequency: 1
+  patience: 10
+  grad_clip: 5.0
+  apply_drop: true
+  resume: true
+  # 纯静态模式下的基础学习率（实际 lr = lr_base × batch/256）
+  lr_base: 0.000667
+
+  # ---- 训练阶段：按模式分别配置 ----
+  #
+  # 注意必须按模式分开：纯静态基线应当是「单阶段、对齐 v1.0 的学习率」，
+  # 若沿用双路的三阶段计划，lr 会被 lr_base 缩放成 5e-7，等于几乎不训练。
+  #
+  # static 模式的 lr=1.0 是占位值，实际 lr = 1.0 × (lr_base × batch/256)
+  #                                   = 1.0 × 5e-4 = 5e-4，与原 trainer.py 对齐。
+  stages_by_mode:
+    dual:
+      - name: "stage1_head_warmup"
+        epochs: 5
+        lr: 0.001
+        freeze_static: true       # 动态分支随机初始化，梯度大，先别动静态分支
+        static_lr_scale: 0.0
+      - name: "stage2_head_converge"
+        epochs: 20
+        lr: 0.0005
+        freeze_static: true
+        static_lr_scale: 0.0
+      - name: "stage3_joint_finetune"
+        epochs: 25
+        lr: 0.0001
+        freeze_static: false      # 联合微调
+        static_lr_scale: 0.1      # 静态分支用小 10 倍的学习率
+
+    dynamic:
+      - name: "stage1_warmup"
+        epochs: 5
+        lr: 0.001
+        freeze_static: true
+        static_lr_scale: 0.0
+      - name: "stage2_converge"
+        epochs: 20
+        lr: 0.0005
+        freeze_static: true
+        static_lr_scale: 0.0
+      - name: "stage3_finetune"
+        epochs: 25
+        lr: 0.0001
+        freeze_static: true
+        static_lr_scale: 0.0
+
+    static:
+      - name: "static_baseline"
+        epochs: 50
+        lr: 1.0                   # 实际 = lr_base × batch/256 = 5e-4，对齐 v1.0
+        freeze_static: false
+        static_lr_scale: 1.0
+
+checkpoint:
+  save_dir: "outputs/checkpoints"
+  prefix: "dual_stream"         # 会被 --prefix 覆盖
+
+logging:
+  log_dir: "outputs/logs"
+  log_file: "dual_stream_training_log.csv"
+
+metadata_file: "data/features/metadata.csv"
+seed: 42

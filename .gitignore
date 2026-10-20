@@ -1,0 +1,59 @@
+# ===================== 数据 =====================
+# 原始 .wptt 轨迹（体积大且有版权，需自行从 NLPR 下载）
+data/raw/*
+!data/raw/.gitkeep
+!data/raw/**/.gitkeep
+
+# 切分结果缓存（可重新生成）
+data/cache/
+data/features/*.npy
+
+# ===================== 训练产出物 =====================
+outputs/
+!outputs/.gitkeep
+
+# ===================== 本地临时产物 =====================
+_smoke_out/
+_logs/
+.dsh-acl-reports/
+_pkg_build/
+_pkg_test/
+_dry_out/
+_dry2/
+_vmcache/
+_z2/
+_z3/
+_e2/
+_e3/
+_c1/
+_c2/
+_gpu_probe.py
+
+# 重构过程中的文件备份（不随仓库分发）
+_refactor_backup/
+
+# 论文文本提取的中间产物
+_paper.txt
+_pdf_text.txt
+
+# 已被本 README 取代的旧版说明
+README_v2.0_backup.md
+
+# 云端打包产物
+dist/
+
+# ===================== 系统与缓存 =====================
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.idea/
+.vscode/
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# ===================== 预训练权重 =====================
+pretrained/*
+!pretrained/.gitkeep

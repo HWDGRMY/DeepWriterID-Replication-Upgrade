@@ -1,0 +1,10 @@
+# 统一使用 LF 换行，避免 Windows / Linux 协作时产生无意义的全文件差异
+* text=auto eol=lf
+
+# 二进制资源不做换行转换
+*.png binary
+*.jpg binary
+*.pth binary
+*.npz binary
+*.pdf binary
+*.zip binary

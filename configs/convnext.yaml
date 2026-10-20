@@ -1,0 +1,35 @@
+model:
+  name: "convnextv2_femto"
+  num_classes: 1019
+  feature_dim: 512
+  pretrained: false
+  pretrained_path: "pretrained/convnextv2_femto.safetensors"
+
+data:
+  image_size: 96
+  batch_size: 192              # 对齐 v1.0
+  num_workers: 16              # 对齐 v1.0
+
+training:
+  epochs: 50
+  lr_base: 0.000667              # 实际 lr = 0.0005 × 256/256 = 5e-4，对齐 v1.0
+  weight_decay: 0.05
+  warmup_epochs: 1
+  eval_frequency: 1            # 对齐 v1.0（每轮测试）
+  patience: 10
+  drop_path: 0.1
+  dropout_head: 0.3
+  dropout_classifier: 0.4
+  warm_start_path: "/root/autodl-tmp/old_models/convnext_warmstart_9647.pth"
+  device: "cuda"
+
+checkpoint:
+  save_dir: "outputs/checkpoints"
+  save_latest: "convnext_latest.pth"
+  save_best: "convnext_best.pth"
+
+logging:
+  log_dir: "outputs/logs"
+  log_file: "convnext_training_log.csv"
+
+seed: 42

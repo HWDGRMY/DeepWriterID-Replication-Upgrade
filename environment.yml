@@ -1,0 +1,29 @@
+name: deepwriterid-v2
+channels:
+  - defaults
+  - conda-forge
+dependencies:
+  - python=3.12
+  - pip
+  - pip:
+      # 核心框架（首次安装请用官方 cu128 源，见 README 的安装步骤）
+      - torch==2.8.0
+      - torchvision==0.23.0
+      # 现代化骨干网络
+      - timm>=0.9.0
+      # 本地加载 timm 预训练权重（src/models/backbone.py 用 safetensors.torch.load_file）
+      - safetensors>=0.4.0
+      # 路径签名特征提取（需 --no-build-isolation，见 README 的安装步骤）
+      - signatory
+      # 数据处理
+      - numpy>=1.24
+      - pandas>=2.0
+      - opencv-python>=4.8
+      # 配置与日志
+      - pyyaml>=6.0
+      - tqdm>=4.65
+      # 可视化与评估
+      - matplotlib>=3.7
+      - scikit-learn>=1.3
+      # 互补性分析的配对 t 检验（analyze_complementarity.py 用 scipy.stats）
+      - scipy>=1.10

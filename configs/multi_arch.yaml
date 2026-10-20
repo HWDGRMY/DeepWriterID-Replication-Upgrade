@@ -1,0 +1,206 @@
+# ============================================================================
+# 统一训练配置 —— 单独训练一个模型，或一起训练多个模型
+#
+# 一份内存数据 + 一个 DataLoader，同时喂下面所有模型。
+# 特征提取每个 batch 只做一次；各模型看到的增强样本完全一致（对比更严格）。
+#
+#   python scripts/train_multi.py                   # 一起训练（下面的全部 runs）
+#   python scripts/train_multi.py --only dcnn       # 只单独训练 dcnn
+#   python scripts/train_multi.py --runs convnext   # 只训练列出的几个
+#   python scripts/train_multi.py --list            # 看看配置里有哪些模型
+#
+# --only / --runs 会自动给组合断点与日志加后缀（如 multi_arch_dcnn），
+# 所以「单独训练」与「一起训练」的产物不会互相覆盖，可以混着用。
+#
+# 每个 run 支持多阶段训练：给它写 stages 列表即可（见文件末尾的注释示例）。
+# 阶段切换时会自动重建该 run 的优化器/调度器，并切换静态分支冻结状态。
+#
+# 【重要】优化器配方的取舍
+# ----------------------------------------------------------------------------
+# 复刻仓库训练 DCNN 用的是 **Adam + 无 weight decay**（它 README 把
+# CosineAnnealingLR 列为稳定收敛的关键因素之一，与「DCNN 没有归一化层」
+# 这一事实吻合）。而本框架的 ConvNeXt 线一直用 AdamW + wd=0.05 + warmup。
+#
+# 两种做法冲突，必须二选一，下面默认给你的是「各自原配方」：
+#   · 优点：DCNN 更容易复现到 95.09%
+#   · 缺点：架构对比里混入了「优化器配方」这个变量
+#
+# 若要做**严格架构对照**，把两个 run 的 optimizer / weight_decay /
+# warmup_epochs 改成完全一样（例如都用 adamw + wd=0.05 + warmup=1）。
+# 建议有条件时两组都跑，论文里更能站住。
+# ============================================================================
+
+runs:
+  # lr 说明：论文未给学习率，基准来自复刻仓库的 5.0e-4 @ batch 192。
+  # batch 改为论文的 100 后按线性缩放：5.0e-4 x 100/192 = 2.60e-4。
+  # 线性缩放保证「每轮学习进度」与 batch 无关：
+  #     progress ∝ (N/B) x lr = (N/B) x (lr0·B/B0) = N·lr0/B0  ->  常数
+  # 所以换 batch 不会改变每轮的学习量，只改变梯度噪声（小 batch 噪声更大，
+  # 通常带来轻微的正则化收益）。
+  # 另：过拟合实验显示 ConvNeXt 在 lr >= 2e-3 时会失败、2.5e-4~5e-4 可学，
+  # 2.60e-4 落在安全区间内。
+
+  # ---- ConvNeXt V2-Femto：本框架原有配方 ----
+  - name: convnext
+    arch: convnext
+    mode: static
+    prefix: arch_cn
+    lr: 2.604e-4
+    optimizer: adamw
+    weight_decay: 0.05
+    warmup_epochs: 1
+
+  # ---- 原论文 DCNN：复刻仓库配方（Adam，无 weight decay）----
+  # warmup 由 0 改为 3：原配方是「从已收敛模型继续训练」用的，
+  # 那种场景不需要 warmup。从零训练时没有 warmup 兜住，第一轮
+  # grad_norm 只有 0.379（ConvNeXt 是 80.4），前期基本学不动。
+  - name: dcnn
+    arch: dcnn
+    mode: static
+    prefix: arch_dcnn
+    lr: 2.604e-4
+    optimizer: adam
+    weight_decay: 0.0
+    warmup_epochs: 3
+
+  # 想加第三个就照抄一段；想在**同一个模型上做三阶段**（双路融合那条线）：
+  # - name: dual
+  #   arch: convnext
+  #   mode: dual
+  #   prefix: arch_dual
+  #   optimizer: adamw
+  #   weight_decay: 0.05
+  #   stages:
+  #     - {name: stage1_head_warmup,    epochs: 5,  lr: 1.0e-3, freeze_static: true,  static_lr_scale: 0.0}
+  #     - {name: stage2_head_converge,  epochs: 20, lr: 5.0e-4, freeze_static: true,  static_lr_scale: 0.0}
+  #     - {name: stage3_joint_finetune, epochs: 25, lr: 1.0e-4, freeze_static: false, static_lr_scale: 0.1}
+  #
+  #   阶段里没写 warmup_epochs 就继承 run 顶层的值；
+  #   没写 lr 就继承 run 的 lr。
+  #   mode='static' 的模型不会被冻结（冻结会让它没有可训练参数）。
+
+# ---- 模型超参（各 run 可用自己的 model_overrides 覆盖）----
+model:
+  feature_dim: 512
+  in_chans: 64
+  # 【从零训练】必须 false：ConvNeXt 不用 ImageNet 预训练权重。
+  # DCNN 没有公开预训练权重，无论这里怎么设都是随机初始化。
+  pretrained: false
+  pretrained_path: "pretrained/convnextv2_femto.safetensors"
+  drop_path: 0.1
+  dropout_head: 0.3
+  # ConvNeXt 的分类头：classifier = Sequential(Dropout(dropout_classifier), Linear)
+  dropout_classifier: 0.4
+  # DCNN 的 FC 之间 dropout（原仓库是 nn.Dropout(0.2)，共 3 处）
+  dcnn_dropout: 0.2
+  # ⚠️ DCNN 分类头前的额外 dropout，**必须是 0**。
+  #   原论文 DCNN 的分类头自带 Dropout(0.2) + Linear。如果这里再给 0.4
+  #   （早期 bug），它会变成 Dropout(0.4) → Dropout(0.2) → Linear，
+  #   分类头被过度正则化，**而参数量一个都没变，光看参数量发现不了**。
+  #   冒烟测试第 14 项会逐项比对 Dropout 集合，防止再犯。
+  dcnn_dropout_classifier: 0.0
+  # 双路融合用（只有 mode=dual 的 run 会用到）
+  dynamic_dim: 256
+  seq_len: 200
+  dynamic_in_dim: 2
+  d_model: 64
+  nhead: 4
+  num_layers: 4
+  dim_feedforward: 256
+  dynamic_dropout: 0.1
+  pooling: "attention"
+  pos_encoding: "sinusoidal"
+  fusion_hidden: 512
+  fusion_dropout: 0.3
+
+data:
+  # 论文 §5 原文："The mini-batch size was set to 100."
+  # 实测成本几乎无差别（1.17M 样本、80 轮）：
+  #   batch 100 -> 11700 步/轮，18.1 分/轮，80 轮约 24.2 小时
+  #   batch 128 ->  9140 步/轮，17.5 分/轮，80 轮约 23.4 小时
+  #   batch 192 ->  6093 步/轮，16.7 分/轮，80 轮约 22.2 小时
+  # 所以直接取论文的 100。
+  batch_size: 100
+  num_workers: 16
+  page_workers: 8
+  segment_workers: 8
+  seq_len: 200
+  dynamic_speed_clip: 10.0
+  # DropSegment：论文的核心数据增强（随机删笔画片段）。
+  # 论文 §3 的规则是「固定上限 m，每次删 r ~ U{0..m} 段」，**不是百分比**。
+  # 实测 m=1 时平均丢弃 19.8% 的墨迹（旧实现按 50% 比例删，丢弃 38.9%，与论文不符）。
+  apply_drop: true
+  drop_max_segments: 1
+  # 几何增强：平移 + 旋转 + 缩放，作用在**坐标**上（论文要求「算签名之前」）。
+  # 评估时强制关闭（否则每轮测试集内容不同，准确率抖动无法归因）。
+  augment_points: true
+  # 位图是否作为第 0 通道。默认 true = 「路径签名与位图一起」（论文原话）。
+  # 设 false 则只有 63 张签名图，可用于复现论文里 M 的另一种读法。
+  use_bitmap: true
+
+training:
+  # 从零训练 50 轮不够（原仓库的 95%/96% 都是在已收敛权重上继续训练的）。
+  # 实测：50 轮方案到 ep29 时 ConvNeXt page_acc≈74%，char_acc≈7.4% 且仍在线性上升。
+  epochs: 80
+  # 【早停已移除】这里没有 patience 键。
+  #
+  # 原因有两条，都是实测确认的：
+  #   1. 触发条件太苛刻。旧实现要求「所有模型连续 N 轮不刷新最佳」才停，
+  #      而两个骨干的收敛速度差很多（本轮 ConvNeXt 到 ep72 还在刷新，
+  #      DCNN 在 ep59 就停了），all() 几乎永远不成立 —— 80 轮里一次都没触发。
+  #   2. 更关键的是**早停与余弦退火冲突**。T_max 绑定在 epochs 上，
+  #      若在第 r 轮提前停，学习率可能还停在初值的 8%~15%，永远走不到退火尾段，
+  #      而最后那几点准确率恰恰来自尾段。
+  #
+  # 因此正确做法不是调 patience，而是**改调度长度**：
+  #     epochs: 60      # T_max 自动跟随，余弦完整走完，约 19.5 小时
+  # 旧的 patience 键即使保留也会被忽略并打印提示。
+  grad_clip: 5.0
+
+# ---- 20-test 增强评估（训练结束后自动跑，用各模型的最佳权重）----
+#
+# 论文口径的稳健性指标：对测试集每轮**重新随机 DropSegment**（随机丢笔）后推一次，
+# 跑 n_test 轮，把每轮的页面级概率累加平均。比单次确定性评估更严格。
+#
+# 所有模型**共享同一批增强样本**（每轮只建一个 DataLoader），所以：
+#   · 模型之间严格配对，可以直接做配对 t 检验
+#   · 数据管道开销只付一次
+#
+# 成本：约 1.5–2 小时（20 轮 × 1171 个 batch × 2 个模型）
+# 想跳过：n_test: 0
+#
+# 也可以在训练结束**之后**单独跑（改轮数/换批量不用重训）：
+#   python scripts/eval_20test.py --n_test 20 --batch_size 256
+eval_20test:
+  enabled: true
+  n_test: 20
+  # 与训练对齐。之前这里是 256/8，比训练（192/16）慢一截，而且
+  # 8 个 worker 只有训练的一半，评估反而成了瓶颈。
+  # 想单独调可以写这两个键，不写就跟随 data.batch_size / data.num_workers。
+  # batch_size: 192
+  # num_workers: 16
+
+# ---- 静态特征：只有一种实现，没有开关 ----
+#
+# 按原文：1 张位图 + 63 张逐点前缀签名图（63 = Σ_{i=0..5} 2^i，含 k=0 常值项）。
+#
+# 早期版本用 `separator_aware` / `fix_signature_layout` 两个开关保留了 v2.0 的
+# 缺陷行为（称为 A0），现已整个删除。A0 有四个缺陷：
+#   · 抬笔边界被抹平 → 位图里 19% 的墨迹是伪造的，单条伪造线段达画布 53%
+#   · 同一个缺陷还让 24.9% 的训练样本被二次切分静默截断，平均丢 21.9% 墨迹
+#   · 62 维签名按 63 切开 → 63 个通道退化成常数底图，空间结构只剩位图的 3.8%
+#   · 缺了原文 §3 定义的 k=0 常值项
+#
+# 缺陷的量化证据保留在 docs/ 与 diagnose_static_features.py 里（只读测量，
+# 不参与训练），代码路径不再保留。
+
+checkpoint:
+  save_dir: "outputs/checkpoints"
+  group: "multi_arch"          # 组合断点前缀（可续训）
+
+logging:
+  log_dir: "outputs/logs"
+  log_file: "multi_arch_training_log.csv"
+
+metadata_file: "data/features/metadata.csv"
+seed: 42
